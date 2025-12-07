@@ -1,0 +1,6 @@
+[build]
+  pythonVersion = "3.10.9"
+  buildCommand = "pip install -r requirements.txt --no-cache-dir"
+
+[deploy]
+  startCommand = "python src/agents/polymarket_agent.py"
