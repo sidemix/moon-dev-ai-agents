@@ -1,38 +1,23 @@
-# Core / essentials
-anthropic>=0.40.0
-openai>=2.6.0
-groq>=0.16.0
+anthropic>=0.34.0
+openai>=1.40.0
+groq>=0.11.0
 google-generativeai>=0.8.0
 deepseek-api>=0.1.0
 xai-sdk>=0.1.0
 litellm>=1.40.0
 python-dotenv>=1.0.0
 requests>=2.31.0
-websocket-client>=1.6.0
-pandas>=2.1.0
+websocket-client>=1.8.0
+pandas>=2.2.0
 numpy>=1.26.0
-pydantic>=2.12.0
-
-# Polymarket & data
-certifi>=2024.8.30
-urllib3>=2.0.0
-charset-normalizer>=3.3.0
-idna>=3.10
-
-# Optional but nice to have (voice alerts, logging, etc.)
-pyttsx3>=2.90
+pydantic>=2.8.0
 rich>=13.7.0
 tqdm>=4.66.0
-
-# Backtesting / RBI (optional but keep if you ever want them)
-backtesting>=0.3.3
+pyttsx3>=2.90
+certifi>=2024.8.30
+urllib3>=2.2.0
+idna>=3.7
+charset-normalizer>=3.3.0
 bokeh>=3.4.0
 matplotlib>=3.8.0
-plotly>=6.0.0
-
-# Crypto utilities (Solana, Hyperliquid, etc. – only if you plan to expand later)
-solana>=0.35.0
-solders>=0.21.0
-hyperliquid-python-sdk>=0.20.0
-ccxt>=4.2.0
-web3>=6.20.0
+backtesting>=0.3.3
