@@ -21,6 +21,7 @@ import pandas as pd
 import threading
 import websocket
 import re  # 🆕 Added for regex parsing
+from dataclasses import dataclass  # 🆕 Checklist v1.0: For PolymarketSignal
 from datetime import datetime, timedelta
 from pathlib import Path
 from termcolor import cprint
@@ -165,33 +166,117 @@ WEBSOCKET_URL = "wss://ws-live-data.polymarket.com"
 # 🆕 TELEGRAM HELPER FUNCTIONS (Checklist v1.0 - Section 2)
 # ==============================================================================
 
-def send_telegram_message(chat_id: str, message: str, parse_mode: str = "Markdown") -> bool:
+# ------------------------------------------------------------------------------
+# 🆕 PolymarketSignal Dataclass (Checklist v1.0 - Section 1)
+# ------------------------------------------------------------------------------
+@dataclass
+class PolymarketSignal:
+    """Structured signal data for Telegram routing."""
+    market_id: str
+    title: str
+    side: str  # "YES" or "NO"
+    consensus_votes: int  # e.g. 5
+    consensus_total: int  # e.g. 6
+    tier: str  # "VIP" or "SECONDARY"
+    url: str
+    reasoning: str
+    confidence: float | None  # 0-100, can be None
+    model_votes_block: str  # Preformatted bullet list
+    timestamp: datetime
+
+
+# ------------------------------------------------------------------------------
+# 🆕 Consensus Classification Helper (Checklist v1.0 - Section 2)
+# ------------------------------------------------------------------------------
+def classify_consensus(votes: int, total: int) -> str | None:
     """
-    🆕 Checklist v1.0 - Section 2.1: Telegram helper function
-    
-    Sends a message to Telegram using the Bot API.
+    Classify consensus strength into VIP, SECONDARY, or None.
     
     Args:
-        chat_id: Telegram chat ID to send to
-        message: Message text (supports Markdown)
-        parse_mode: "Markdown" or "HTML"
+        votes: Number of models that agreed on the same side
+        total: Total number of models that responded
+    
+    Returns:
+        "VIP" if votes >= 5 and total >= 6
+        "SECONDARY" if votes == 4 and total >= 6
+        None otherwise (ignore)
+    """
+    if total < 6:
+        return None
+    if votes >= 5:
+        return "VIP"
+    if votes == 4:
+        return "SECONDARY"
+    return None
+
+
+# ------------------------------------------------------------------------------
+# 🆕 Telegram Message Formatting (Checklist v1.0 - Exact Templates)
+# ------------------------------------------------------------------------------
+def format_vip_message(signal: PolymarketSignal) -> str:
+    """
+    Format a VIP Telegram message for a high-consensus signal.
+    Uses EXACT template from Checklist v1.0.
+    """
+    confidence_str = (
+        f"{signal.confidence:.0f}%" if signal.confidence is not None else "High"
+    )
+
+    return (
+        f"🟢 *VIP Signal — {signal.consensus_votes}/{signal.consensus_total} Models Agree ({signal.side})*\n\n"
+        f"{signal.title}\n\n"
+        f"**Recommendation:** BUY {signal.side}\n"
+        f"**Confidence:** {confidence_str}\n"
+        f"👉 **Open Market:** {signal.url}\n\n"
+        f"**Model Votes:**\n"
+        f"{signal.model_votes_block}"
+    )
+
+
+def format_secondary_message(signal: PolymarketSignal) -> str:
+    """
+    Format a Secondary Telegram message for a medium-consensus signal.
+    Uses EXACT template from Checklist v1.0.
+    """
+    return (
+        f"🔵 *Secondary Signal — {signal.consensus_votes}/{signal.consensus_total} Models Agree ({signal.side})*\n\n"
+        f"{signal.title}\n\n"
+        f"BUY {signal.side} — Moderate Confidence\n"
+        f"👉 {signal.url}"
+    )
+
+
+# ------------------------------------------------------------------------------
+# 🆕 Telegram Sender (Checklist v1.0 - Section 5)
+# ------------------------------------------------------------------------------
+def send_telegram_message(text: str, chat_id: str = None) -> bool:
+    """
+    Send a message to Telegram using the Bot API.
+    
+    Args:
+        text: Message text (supports Markdown)
+        chat_id: Optional chat ID override (defaults to VIP channel)
     
     Returns:
         bool: True if sent successfully, False otherwise
     """
-    if not TELEGRAM_BOT_TOKEN or not chat_id:
+    if not TELEGRAM_BOT_TOKEN:
         return False
     
     if not TELEGRAM_ENABLE_SIGNALS:
         return False
     
+    target_chat = chat_id or TELEGRAM_VIP_CHAT_ID
+    if not target_chat:
+        return False
+    
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
-            "chat_id": chat_id,
-            "text": message,
-            "parse_mode": parse_mode,
-            "disable_web_page_preview": False  # Allow link previews
+            "chat_id": target_chat,
+            "text": text,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": False
         }
         
         response = requests.post(url, json=payload, timeout=10)
@@ -207,83 +292,9 @@ def send_telegram_message(chat_id: str, message: str, parse_mode: str = "Markdow
         return False
 
 
-def classify_signal(consensus_count: int, total_models: int) -> str:
-    """
-    🆕 Checklist v1.0 - Section 3: Consensus-Based Classification
-    
-    Classifies a signal based on consensus strength.
-    
-    Args:
-        consensus_count: Number of models that agreed
-        total_models: Total number of models that responded
-    
-    Returns:
-        str: "VIP", "SECONDARY", or "IGNORE"
-    """
-    # 🆕 Require at least TOTAL_MODELS_EXPECTED models for valid signals
-    if total_models < TOTAL_MODELS_EXPECTED:
-        return "IGNORE"
-    
-    # VIP: 5/6+ agreement
-    if consensus_count >= VIP_MIN_AGREEMENT:
-        return "VIP"
-    
-    # Secondary: exactly 4/6 agreement
-    if consensus_count >= SECONDARY_MIN_AGREEMENT:
-        return "SECONDARY"
-    
-    # Everything else is noise
-    return "IGNORE"
-
-
-def format_vip_message(title: str, side: str, consensus_line: str, link: str, reasoning: str) -> str:
-    """
-    🆕 Checklist v1.0 - Section 4.1: VIP Signal Format
-    
-    Formats a VIP signal message for Telegram.
-    """
-    if TELEGRAM_USE_MARKDOWN_LINKS:
-        link_text = f"👉 [Open Market]({link})"
-    else:
-        link_text = f"👉 {link}"
-    
-    message = f"""🔥 *VIP Polymarket Signal*
-
-*Market:* {title}
-*Side:* `{side}`
-*Consensus:* {consensus_line}
-
-{link_text}
-
-*Reason:* {reasoning}"""
-    
-    return message
-
-
-def format_secondary_message(title: str, side: str, consensus_line: str, link: str, reasoning: str) -> str:
-    """
-    🆕 Checklist v1.0 - Section 4.2: Secondary Signal Format
-    
-    Formats a Secondary signal message for Telegram.
-    """
-    if TELEGRAM_USE_MARKDOWN_LINKS:
-        link_text = f"👉 [Open Market]({link})"
-    else:
-        link_text = f"👉 {link}"
-    
-    message = f"""⚪️ *Secondary Signal*
-
-*Market:* {title}
-*Side:* `{side}`
-*Consensus:* {consensus_line}
-
-{link_text}
-
-*Reason:* {reasoning}"""
-    
-    return message
-
-
+# ------------------------------------------------------------------------------
+# 🆕 Consensus Picks Parser (Checklist v1.0 - Section 5)
+# ------------------------------------------------------------------------------
 def parse_consensus_picks(consensus_text: str) -> list:
     """
     🆕 Checklist v1.0 - Section 5: Safe Parsing of AI Consensus Output
@@ -367,8 +378,9 @@ def process_consensus_and_send_signals(consensus_text: str):
     Main router function that:
     1. Parses the consensus AI text
     2. Splits into individual picks
-    3. Classifies each pick (VIP/Secondary/Ignore)
-    4. Builds and sends Telegram messages
+    3. Classifies each pick (VIP/Secondary/Ignore) using classify_consensus()
+    4. Creates PolymarketSignal instance
+    5. Builds and sends Telegram messages
     
     Args:
         consensus_text: The raw consensus AI response
@@ -403,28 +415,60 @@ def process_consensus_and_send_signals(consensus_text: str):
             # Get required fields with defaults
             title = pick.get('title', 'Unknown Market')
             side = pick.get('side', 'NO_TRADE')
-            consensus_line = pick.get('consensus_line', 'Unknown consensus')
             link = pick.get('link', '')
             reasoning = pick.get('reasoning', 'No reasoning provided')
-            consensus_count = pick.get('consensus_count', 0)
+            consensus_votes = pick.get('consensus_count', 0)
             total_models = pick.get('total_models', 0)
+            market_number = pick.get('market_number', 0)
             
-            # 🆕 Checklist Section 8: Skip if link is missing (we need clickable URL)
+            # Skip NO_TRADE signals - only interested in YES/NO positions
+            if side == 'NO_TRADE':
+                ignored_count += 1
+                continue
+            
+            # Skip if link is missing (we need clickable URL)
             if not link or not link.startswith('http'):
                 cprint(f"⚠️ Skipping pick (no valid link): {title[:40]}...", "yellow")
                 ignored_count += 1
                 continue
             
-            # Classify the signal
-            signal_type = classify_signal(consensus_count, total_models)
+            # 🆕 Classify using classify_consensus() helper
+            tier = classify_consensus(consensus_votes, total_models)
             
-            if signal_type == "VIP":
-                # 🆕 Section 9: Light logging
-                print(f"[VIP] {title[:50]} ({side}) {consensus_line}")
+            if tier is None:
+                # Ignored (< 4/6 or insufficient models)
+                ignored_count += 1
+                cprint(f"⏭️ Ignored (weak consensus): {title[:40]}... ({consensus_votes}/{total_models})", "white")
+                continue
+            
+            # 🆕 Build model votes block (placeholder - actual votes from swarm would be better)
+            model_votes_block = f"• {consensus_votes} models voted {side}\n• {total_models - consensus_votes} models voted otherwise"
+            
+            # 🆕 Calculate confidence percentage
+            confidence = (consensus_votes / total_models * 100) if total_models > 0 else None
+            
+            # 🆕 Create PolymarketSignal instance
+            signal = PolymarketSignal(
+                market_id=str(market_number),
+                title=title,
+                side=side,
+                consensus_votes=consensus_votes,
+                consensus_total=total_models,
+                tier=tier,
+                url=link,
+                reasoning=reasoning,
+                confidence=confidence,
+                model_votes_block=model_votes_block,
+                timestamp=datetime.now()
+            )
+            
+            if tier == "VIP":
+                # Light logging
+                print(f"[VIP] {title[:50]} ({side}) {consensus_votes}/{total_models}")
                 
                 # Format and send VIP message
-                message = format_vip_message(title, side, consensus_line, link, reasoning)
-                success = send_telegram_message(TELEGRAM_VIP_CHAT_ID, message)
+                message = format_vip_message(signal)
+                success = send_telegram_message(message, TELEGRAM_VIP_CHAT_ID)
                 
                 if success:
                     cprint(f"✅ VIP signal sent: {title[:40]}...", "green", attrs=['bold'])
@@ -432,27 +476,22 @@ def process_consensus_and_send_signals(consensus_text: str):
                 else:
                     cprint(f"❌ Failed to send VIP signal: {title[:40]}...", "red")
                     
-            elif signal_type == "SECONDARY":
-                # 🆕 Section 9: Light logging
-                print(f"[SECONDARY] {title[:50]} ({side}) {consensus_line}")
+            elif tier == "SECONDARY":
+                # Light logging
+                print(f"[SECONDARY] {title[:50]} ({side}) {consensus_votes}/{total_models}")
                 
                 # Format and send Secondary message
-                message = format_secondary_message(title, side, consensus_line, link, reasoning)
-                success = send_telegram_message(TELEGRAM_SECONDARY_CHAT_ID, message)
+                message = format_secondary_message(signal)
+                success = send_telegram_message(message, TELEGRAM_SECONDARY_CHAT_ID)
                 
                 if success:
                     cprint(f"✅ Secondary signal sent: {title[:40]}...", "cyan")
                     secondary_count += 1
                 else:
                     cprint(f"❌ Failed to send Secondary signal: {title[:40]}...", "red")
-                    
-            else:
-                # Ignored (3/6 or below)
-                ignored_count += 1
-                cprint(f"⏭️ Ignored (weak consensus): {title[:40]}... ({consensus_count}/{total_models})", "white")
                 
         except Exception as e:
-            # 🆕 Checklist Section 8: If parsing fails → skip only that pick
+            # If parsing fails → skip only that pick (never break the bot)
             cprint(f"⚠️ Error processing pick: {e}", "yellow")
             ignored_count += 1
             continue
@@ -460,8 +499,8 @@ def process_consensus_and_send_signals(consensus_text: str):
     # Summary
     cprint("\n" + "-"*40, "magenta")
     cprint("📊 SIGNAL ROUTING SUMMARY:", "magenta", attrs=['bold'])
-    cprint(f"   🔥 VIP signals sent: {vip_count}", "green" if vip_count > 0 else "white")
-    cprint(f"   ⚪ Secondary signals sent: {secondary_count}", "cyan" if secondary_count > 0 else "white")
+    cprint(f"   🟢 VIP signals sent: {vip_count}", "green" if vip_count > 0 else "white")
+    cprint(f"   🔵 Secondary signals sent: {secondary_count}", "cyan" if secondary_count > 0 else "white")
     cprint(f"   ⏭️ Ignored (weak/invalid): {ignored_count}", "white")
     cprint("-"*40 + "\n", "magenta")
 
