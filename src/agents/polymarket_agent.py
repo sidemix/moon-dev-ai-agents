@@ -164,7 +164,7 @@ class PolymarketAgent:
         ])
 
         try:
-            result = model_factory.swarm.query(prompt)
+            result = model_factory.query(prompt)
             votes = {"YES": 0, "NO": 0, "HOLD": 0}
             details = []
 
