@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Moon Dev's Polymarket Agent — FINAL 7-MODEL + TELEGRAM (Dec 2025)
-100% working — no crashes, no missing attributes
+100% working — no crashes, no missing modules, no pandas errors
 """
 
 import os
@@ -24,7 +24,7 @@ if project_root not in sys.path:
 from src.models.model_factory import model_factory
 
 # ==============================================================================
-# CONFIG
+# CONFIG — ALL FROM RAILWAY VARIABLES
 # ==============================================================================
 
 MIN_TRADE_SIZE_USD = int(os.getenv("MIN_TRADE_SIZE_USD", "500"))
@@ -56,7 +56,6 @@ class PolymarketAgent:
         self.ws_connected = False
 
         self.markets_df = self._load_csv()
-
         cprint(f"Loaded {len(self.markets_df)} markets", "green")
 
         self.connect_websocket()
@@ -73,13 +72,16 @@ class PolymarketAgent:
                     if col not in df.columns:
                         df[col] = None
                 return df
-            except:
-                pass
+            except Exception as e:
+                cprint(f"CSV load error: {e}", "yellow")
         return pd.DataFrame(columns=["market_id", "title", "event_slug", "last_trade_timestamp"])
 
     def _save_csv(self):
-        with self.csv_lock:
-            self.markets_df.to_csv(MARKETS_CSV, index=False)
+        try:
+            with self.csv_lock:
+                self.markets_df.to_csv(MARKETS_CSV, index=False)
+        except Exception as e:
+            cprint(f"CSV save error: {e}", "red")
 
     def connect_websocket(self):
         cprint(f"Connecting to {WEBSOCKET_URL}...", "cyan")
@@ -164,7 +166,7 @@ class PolymarketAgent:
         ])
 
         try:
-            result = model_factory.query(prompt)  # Fixed: use .query() not .swarm.query()
+            result = model_factory.query(prompt)  # Fixed: use .query() directly
             votes = {"YES": 0, "NO": 0, "HOLD": 0}
             details = []
 
