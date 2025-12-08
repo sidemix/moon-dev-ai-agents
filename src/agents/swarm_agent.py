@@ -64,6 +64,9 @@ SWARM_MODELS = {
     "deepseek": (True, "deepseek", "deepseek-chat"),  # DeepSeek Chat - Fast chat model (API)
     "xai": (True, "xai", "grok-4-fast-reasoning"),  # Grok-4 fast reasoning ($0.20-$0.50/1M tokens)
     "openrouter_qwen": (True, "openrouter", "qwen/qwen3-max"),  # Qwen 3 Max - Powerful reasoning ($1.00/$1.00 per 1M tokens)
+    # YOUR WORKING MODELS
+    "claude": (True, "anthropic", "claude-sonnet-4-5"),
+    "opus":   (True, "anthropic", "claude-opus-4-5-20251101"),
 
     # 🔇 Disabled Models (uncomment to enable)
     "claude": (True, "claude", "claude-sonnet-4-5"),  # Claude 4.5 Sonnet - Latest & Greatest!
@@ -80,6 +83,11 @@ SWARM_MODELS = {
     #"openrouter_deepseek_r1": (True, "openrouter", "deepseek/deepseek-r1-0528"),  # DeepSeek R1 - Advanced reasoning ($0.55/$2.19 per 1M tokens)
     #"openrouter_claude_opus": (True, "openrouter", "anthropic/claude-opus-4.1"),  # Claude Opus 4.1 via OpenRouter
     "openrouter_gpt5_mini": (True, "openrouter", "openai/gpt-5-mini"),  # GPT-5 Mini via OpenRouter
+
+    "openai":     (True, "openai",     "o1-mini"),                     # Uses OPENAI_API_KEY
+    "grok":       (True, "xai",        "grok-beta"),                    # Uses XAI_API_KEY + XAI_MODEL=grok-beta
+    "together":   (True, "together",   os.getenv("TOGETHER_MODEL", "meta-llama/Llama-3.3-70B-Instruct-Turbo")),
+    # "openrouter": (True, "openrouter", "openai/gpt-5-mini"),          # Optional 5th model
 
     # 💡 See all 200+ models at: https://openrouter.ai/docs
     # 💡 Any model from openrouter_model.py can be used here!
