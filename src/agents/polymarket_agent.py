@@ -998,9 +998,9 @@ Provide predictions for each market in the specified format."""
 
             # Query the swarm (swarm handles timeouts gracefully and returns partial results)
             cprint("📡 Moon Dev sending prompts to swarm...", "cyan")
+            # 🆕 Fix: SwarmAgent.query() only accepts 'prompt', not 'system_prompt'
             swarm_result = self.swarm.query(
-                prompt=user_prompt,
-                system_prompt=system_prompt
+                prompt=user_prompt
             )
 
             # Check if we got any responses
