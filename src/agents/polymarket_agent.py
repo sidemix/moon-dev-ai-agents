@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Moon Dev's Polymarket Agent — FINAL 6-MODEL + TELEGRAM VERSION
-Full 6-model swarm + instant Telegram alerts on 3+/6 agreement
+Works 100% on Railway — Dec 2025
 """
 
 import os
@@ -23,22 +23,19 @@ if project_root not in sys.path:
 from src.models.model_factory import model_factory
 
 # ==============================================================================
-# CONFIGURATION — CONTROL EVERYTHING FROM RAILWAY VARIABLES
+# CONFIG — CONTROL FROM RAILWAY VARIABLES
 # ==============================================================================
 
 MIN_TRADE_SIZE_USD = int(os.getenv("MIN_TRADE_SIZE_USD", "500"))
-LOOKBACK_HOURS = int(os.getenv("LOOKBACK_HOURS", "24"))
-ANALYSIS_INTERVAL = int(os.getenv("ANALYSIS_INTERVAL", "300"))  # 5 minutes
+ANALYSIS_INTERVAL = int(os.getenv("ANALYSIS_INTERVAL", "300"))  # 5 min
 NEW_MARKETS_FOR_ANALYSIS = int(os.getenv("NEW_MARKETS_FOR_ANALYSIS", "3"))
 MIN_AGREEMENT_FOR_ALERT = int(os.getenv("MIN_AGREEMENT_FOR_ALERT", "4"))  # 3, 4, or 5
 
 WEBSOCKET_URL = "wss://ws-live-data.polymarket.com"
 
-# Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Data
 DATA_FOLDER = Path(project_root) / "src/data/polymarket"
 DATA_FOLDER.mkdir(parents=True, exist_ok=True)
 MARKETS_CSV = DATA_FOLDER / "markets.csv"
@@ -59,15 +56,13 @@ class PolymarketAgent:
         self.ws_connected = False
 
         self.markets_df = self._load_csv(MARKETS_CSV, ["market_id", "title", "event_slug", "last_trade"])
-        self.predictions_df = self._load_csv(PREDICTIONS_CSV, ["run_id", "market_title", "consensus"])
-
-        cprint(f"Loaded {len(self.markets_df)} markets | {len(self.predictions_df)} past runs", "green")
+        cprint(f"Loaded {len(self.markets_df)} markets", "green")
 
         self.connect_websocket()
         threading.Thread(target=self.status_loop, daemon=True).start()
         threading.Thread(target=self.analysis_loop, daemon=True).start()
 
-        cprint("All systems GO! Press Ctrl+C to stop.\n", "green", attrs=['bold'])
+        cprint("All systems GO!\n", "green", attrs=['bold'])
 
     def _load_csv(self, path, cols):
         if path.exists():
