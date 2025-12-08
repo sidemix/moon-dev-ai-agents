@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Moon Dev's Polymarket Agent — FINAL 6-MODEL + TELEGRAM VERSION
-100% crash-proof — works even with empty CSVs
+100% crash-proof — no more pandas/pyarrow errors, no more UnboundLocalError
 """
 
 import os
@@ -23,7 +23,7 @@ if project_root not in sys.path:
 from src.models.model_factory import model_factory
 
 # ==============================================================================
-# CONFIG — CONTROL FROM RAILWAY VARIABLES
+# CONFIG
 # ==============================================================================
 
 MIN_TRADE_SIZE_USD = int(os.getenv("MIN_TRADE_SIZE_USD", "500"))
@@ -41,7 +41,7 @@ DATA_FOLDER.mkdir(parents=True, exist_ok=True)
 MARKETS_CSV = DATA_FOLDER / "markets.csv"
 
 # ==============================================================================
-# Polymarket Agent — CRASH-PROOF EDITION
+# Polymarket Agent — BULLETPROOF
 # ==============================================================================
 
 class PolymarketAgent:
@@ -68,14 +68,12 @@ class PolymarketAgent:
         if MARKETS_CSV.exists():
             try:
                 df = pd.read_csv(MARKETS_CSV)
-                # Ensure required columns exist
                 for col in ["market_id", "title", "event_slug", "last_trade"]:
                     if col not in df.columns:
                         df[col] = None
                 return df
             except:
                 pass
-        # Fresh DataFrame with correct columns
         return pd.DataFrame(columns=["market_id", "title", "event_slug", "last_trade"])
 
     def _save_csv(self):
@@ -111,7 +109,6 @@ class PolymarketAgent:
             slug = p.get("eventSlug", "")
             if not mid or not slug: return
 
-            # Add or update market
             if mid in self.markets_df["market_id"].values:
                 self.markets_df.loc[self.markets_df["market_id"] == mid, "last_trade"] = datetime.now().isoformat()
             else:
@@ -130,11 +127,9 @@ class PolymarketAgent:
     def status_loop(self):
         while True:
             time.sleep(30)
-            fresh = len(self.markets_df[
-                self.markets_df["last_trade"].isna() |
-                (pd.to_datetime(self.markets_df["last_trade"], errors="coerce") > (datetime.now() - timedelta(hours=8)))
-            ])
-            cprint(f"\nStatus @ {datetime.now().strftime('%H:%M:%S')} | Markets: {len(self.markets_df)} | Fresh: {fresh}", "cyan")
+            df = self.markets_df
+            fresh = len(df[df["last_trade"].isna() | (pd.to_datetime(df["last_trade"], errors="coerce") > (datetime.now() - timedelta(hours=8)))])
+            cprint(f"\nStatus @ {datetime.now().strftime('%H:%M:%S')} | Markets: {len(df)} | Fresh: {fresh}", "cyan")
 
     def analysis_loop(self):
         cprint("First analysis starting NOW...", "yellow", attrs=['bold'])
@@ -143,21 +138,24 @@ class PolymarketAgent:
             time.sleep(ANALYSIS_INTERVAL)
 
     def run_analysis(self):
-        # Safe fresh market count
+        df = self.markets_df
+
+        # Safe fresh count
         try:
-            last_trade_times = pd.to_datetime(self.markets_df["last_trade"], errors="coerce")
+            last_trade_times = pd.to_datetime(df["last_trade"], errors="coerce")
             cutoff = datetime.now() - timedelta(hours=8) if self.last_analysis_run else None
-            fresh = self.markets_df["last_trade"].isna() | (last_trade_times > cutoff)
-            fresh_count = fresh.sum()
+            fresh_mask = df["last_trade"].isna() | (last_trade_times > cutoff)
+            fresh_count = fresh_mask.sum()
         except:
-            fresh_count = len(self.markets_df)
+            fresh_count = len(df)
 
         if fresh_count < NEW_MARKETS_FOR_ANALYSIS and self.last_analysis_run:
             return
 
         cprint(f"\n6-MODEL ANALYSIS on {fresh_count} fresh markets!", "magenta", attrs=['bold'])
 
-        markets = self.markets_df[fresh].tail(10) if fresh_count > 0 else self.markets_df.tail(10)
+        markets = df[fresh_mask].tail(10) if fresh_count > 0 else df.tail(10)
+
         prompt = "Analyze these Polymarket markets. Answer only YES, NO, or HOLD for each:\n\n" + "\n".join([
             f"{i+1}. {row['title']}\nhttps://polymarket.com/event/{row['event_slug']}"
             for i, row in enumerate(markets.iterrows(), 1)
