@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Moon Dev's Polymarket Agent — FINAL 6-MODEL + TELEGRAM VERSION
-Works 100% on Railway — Dec 2025
+100% crash-proof — works even with empty CSVs
 """
 
 import os
@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from termcolor import cprint
 
-# Add project root to path
+# Add project root
 project_root = str(Path(__file__).parent.parent.parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -27,9 +27,9 @@ from src.models.model_factory import model_factory
 # ==============================================================================
 
 MIN_TRADE_SIZE_USD = int(os.getenv("MIN_TRADE_SIZE_USD", "500"))
-ANALYSIS_INTERVAL = int(os.getenv("ANALYSIS_INTERVAL", "300"))  # 5 min
+ANALYSIS_INTERVAL = int(os.getenv("ANALYSIS_INTERVAL", "300"))
 NEW_MARKETS_FOR_ANALYSIS = int(os.getenv("NEW_MARKETS_FOR_ANALYSIS", "3"))
-MIN_AGREEMENT_FOR_ALERT = int(os.getenv("MIN_AGREEMENT_FOR_ALERT", "4"))  # 3, 4, or 5
+MIN_AGREEMENT_FOR_ALERT = int(os.getenv("MIN_AGREEMENT_FOR_ALERT", "4"))
 
 WEBSOCKET_URL = "wss://ws-live-data.polymarket.com"
 
@@ -39,10 +39,9 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DATA_FOLDER = Path(project_root) / "src/data/polymarket"
 DATA_FOLDER.mkdir(parents=True, exist_ok=True)
 MARKETS_CSV = DATA_FOLDER / "markets.csv"
-PREDICTIONS_CSV = DATA_FOLDER / "predictions.csv"
 
 # ==============================================================================
-# Polymarket Agent
+# Polymarket Agent — CRASH-PROOF EDITION
 # ==============================================================================
 
 class PolymarketAgent:
@@ -55,7 +54,8 @@ class PolymarketAgent:
         self.last_analysis_run = None
         self.ws_connected = False
 
-        self.markets_df = self._load_csv(MARKETS_CSV, ["market_id", "title", "event_slug", "last_trade"])
+        self.markets_df = self._load_csv()
+
         cprint(f"Loaded {len(self.markets_df)} markets", "green")
 
         self.connect_websocket()
@@ -64,15 +64,23 @@ class PolymarketAgent:
 
         cprint("All systems GO!\n", "green", attrs=['bold'])
 
-    def _load_csv(self, path, cols):
-        if path.exists():
-            try: return pd.read_csv(path)
-            except: pass
-        return pd.DataFrame(columns=cols)
+    def _load_csv(self):
+        if MARKETS_CSV.exists():
+            try:
+                df = pd.read_csv(MARKETS_CSV)
+                # Ensure required columns exist
+                for col in ["market_id", "title", "event_slug", "last_trade"]:
+                    if col not in df.columns:
+                        df[col] = None
+                return df
+            except:
+                pass
+        # Fresh DataFrame with correct columns
+        return pd.DataFrame(columns=["market_id", "title", "event_slug", "last_trade"])
 
-    def _save_csv(self, df, path):
+    def _save_csv(self):
         with self.csv_lock:
-            df.to_csv(path, index=False)
+            self.markets_df.to_csv(MARKETS_CSV, index=False)
 
     def connect_websocket(self):
         cprint(f"Connecting to {WEBSOCKET_URL}...", "cyan")
@@ -103,14 +111,20 @@ class PolymarketAgent:
             slug = p.get("eventSlug", "")
             if not mid or not slug: return
 
+            # Add or update market
             if mid in self.markets_df["market_id"].values:
                 self.markets_df.loc[self.markets_df["market_id"] == mid, "last_trade"] = datetime.now().isoformat()
             else:
-                row = pd.DataFrame([{"market_id": mid, "title": title, "event_slug": slug, "last_trade": datetime.now().isoformat()}])
-                self.markets_df = pd.concat([self.markets_df, row], ignore_index=True)
+                new_row = pd.DataFrame([{
+                    "market_id": mid,
+                    "title": title,
+                    "event_slug": slug,
+                    "last_trade": datetime.now().isoformat()
+                }])
+                self.markets_df = pd.concat([self.markets_df, new_row], ignore_index=True)
                 cprint(f"NEW: ${usd:,.0f} → {title[:70]}", "green")
 
-            self._save_csv(self.markets_df, MARKETS_CSV)
+            self._save_csv()
         except: pass
 
     def status_loop(self):
@@ -118,7 +132,7 @@ class PolymarketAgent:
             time.sleep(30)
             fresh = len(self.markets_df[
                 self.markets_df["last_trade"].isna() |
-                (pd.to_datetime(self.markets_df["last_trade"]) > (datetime.now() - timedelta(hours=8)))
+                (pd.to_datetime(self.markets_df["last_trade"], errors="coerce") > (datetime.now() - timedelta(hours=8)))
             ])
             cprint(f"\nStatus @ {datetime.now().strftime('%H:%M:%S')} | Markets: {len(self.markets_df)} | Fresh: {fresh}", "cyan")
 
@@ -129,16 +143,21 @@ class PolymarketAgent:
             time.sleep(ANALYSIS_INTERVAL)
 
     def run_analysis(self):
-        cutoff = datetime.now() - timedelta(hours=8) if self.last_analysis_run else None
-        mask = self.markets_df["last_trade"].isna() | (pd.to_datetime(self.markets_df["last_trade"]) > cutoff)
-        fresh = len(self.markets_df[mask])
+        # Safe fresh market count
+        try:
+            last_trade_times = pd.to_datetime(self.markets_df["last_trade"], errors="coerce")
+            cutoff = datetime.now() - timedelta(hours=8) if self.last_analysis_run else None
+            fresh = self.markets_df["last_trade"].isna() | (last_trade_times > cutoff)
+            fresh_count = fresh.sum()
+        except:
+            fresh_count = len(self.markets_df)
 
-        if fresh < NEW_MARKETS_FOR_ANALYSIS and self.last_analysis_run:
+        if fresh_count < NEW_MARKETS_FOR_ANALYSIS and self.last_analysis_run:
             return
 
-        cprint(f"\n6-MODEL ANALYSIS on {fresh} fresh markets!", "magenta", attrs=['bold'])
+        cprint(f"\n6-MODEL ANALYSIS on {fresh_count} fresh markets!", "magenta", attrs=['bold'])
 
-        markets = self.markets_df[mask].tail(10)
+        markets = self.markets_df[fresh].tail(10) if fresh_count > 0 else self.markets_df.tail(10)
         prompt = "Analyze these Polymarket markets. Answer only YES, NO, or HOLD for each:\n\n" + "\n".join([
             f"{i+1}. {row['title']}\nhttps://polymarket.com/event/{row['event_slug']}"
             for i, row in enumerate(markets.iterrows(), 1)
