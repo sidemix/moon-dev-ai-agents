@@ -292,6 +292,22 @@ def send_telegram_message(text: str, chat_id: str = None) -> bool:
         return False
 
 
+def send_startup_message():
+    """
+    🆕 Telegram startup test - sends a single message when bot starts.
+    Called once at startup to confirm Telegram is working.
+    Fails gracefully if Telegram is not configured.
+    """
+    try:
+        success = send_telegram_message("🚀 PolyMarket AI Bot is online and ready to send signals.")
+        if success:
+            print("[STARTUP] Telegram OK")
+        else:
+            print("[STARTUP] Telegram not configured or disabled")
+    except Exception as e:
+        print(f"[STARTUP] Telegram failed: {e}")
+
+
 # ------------------------------------------------------------------------------
 # 🆕 Consensus Picks Parser (Checklist v1.0 - Section 5)
 # ------------------------------------------------------------------------------
@@ -1889,6 +1905,9 @@ def main():
 
     # Initialize agent
     agent = PolymarketAgent()
+
+    # 🆕 Telegram startup test - confirm Telegram is working
+    send_startup_message()
 
     # 🌙 Moon Dev - Fetch historical trades on startup to populate database
     cprint("\n" + "="*80, "yellow")
