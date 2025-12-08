@@ -1,6 +1,6 @@
 """
-Moon Dev's Model Factory — FIXED FOR OFFICIAL xAI SDK (Dec 2025)
-Supports Claude, OpenAI, Grok (xai-sdk), Together, OpenRouter
+Moon Dev's Model Factory — FIXED FOR xAI GROK SDK (Dec 2025)
+Supports Claude, OpenAI, Grok (official xai-sdk), Together, OpenRouter
 """
 
 import os
@@ -9,11 +9,13 @@ from termcolor import cprint
 from dotenv import load_dotenv
 from pathlib import Path
 
-# Official SDK imports
+# Official SDK imports with error handling
 try:
-    from xai_sdk import Client as XAIClient  # Official xAI SDK
+    from xai_sdk import Client as XAIClient
+    XAI_AVAILABLE = True
 except ImportError:
     XAIClient = None
+    XAI_AVAILABLE = False
 
 from openai import OpenAI
 from anthropic import Anthropic
@@ -39,7 +41,7 @@ class ModelFactory:
                 }
                 self.models["opus"] = {
                     "client": client,
-                    "model": "claude-3-opus-20240229",  # Opus fallback (update to 4.5 if available)
+                    "model": "claude-3-opus-20240229",  # Opus (update to 4.5 if available)
                     "name": "Claude Opus 4.5"
                 }
                 cprint("Claude Sonnet + Opus ready", "green")
@@ -59,9 +61,9 @@ class ModelFactory:
             except Exception as e:
                 cprint(f"OpenAI failed: {e}", "red")
 
-        # Grok (xAI) — OFFICIAL SDK FIX
+        # Grok (xAI) — OFFICIAL SDK WITH IMPORT FIX
         if key := os.getenv("XAI_API_KEY"):
-            if XAIClient is None:
+            if not XAI_AVAILABLE:
                 cprint("xai-sdk not installed — run: pip install xai-sdk==1.5.0", "red")
             else:
                 try:
@@ -78,7 +80,7 @@ class ModelFactory:
         # Together.ai (OpenAI-compatible)
         if key := os.getenv("TOGETHER_API_KEY"):
             try:
-                model = os.getenv("TOGETHER_MODEL", "meta-llama/Llama-3.1-70B-Instruct")
+                model = os.getenv("TOGETHER_MODEL", "meta-llama/Llama-3.3-70B-Instruct-Turbo")
                 client = OpenAI(api_key=key, base_url="https://api.together.xyz/v1")
                 self.models["together"] = {
                     "client": client,
