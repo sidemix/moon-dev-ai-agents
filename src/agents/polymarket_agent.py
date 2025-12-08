@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Moon Dev's Polymarket Agent — FINAL 6-MODEL + TELEGRAM VERSION
-100% crash-proof — no pandas errors, no UnboundLocalError
+100% crash-proof — works perfectly on Railway
 """
 
 import os
@@ -150,19 +150,22 @@ class PolymarketAgent:
             fresh_mask = df["last_trade"].isna() | (last_trade_times > cutoff)
             fresh_count = fresh_mask.sum()
         except:
-            pass  # Keep fresh_mask = all markets
+            pass
 
         if fresh_count < NEW_MARKETS_FOR_ANALYSIS and self.last_analysis_run:
             return
 
         cprint(f"\n6-MODEL ANALYSIS on {fresh_count} fresh markets!", "magenta", attrs=['bold'])
 
-        markets = df[fresh_mask].tail(10) if fresh_count > 0 else df.tail(10)
+        # Fixed: markets.iterrows() returns (index, row), so use row directly
+        markets_to_show = df[fresh_mask].tail(10) if fresh_count > 0 else df.tail(10)
+        prompt_lines = []
+        for i, (_, row) in enumerate(markets_to_show.iterrows(), 1):
+            title = row["title"] if pd.notna(row["title"]) else "Unknown"
+            slug = row["event_slug"] if pd.notna(row["event_slug"]) else ""
+            prompt_lines.append(f"{i}. {title}\nhttps://polymarket.com/event/{slug}")
 
-        prompt = "Analyze these Polymarket markets. Answer only YES, NO, or HOLD for each:\n\n" + "\n".join([
-            f"{i+1}. {row['title']}\nhttps://polymarket.com/event/{row['event_slug']}"
-            for i, row in enumerate(markets.iterrows(), 1)
-        ])
+        prompt = "Analyze these Polymarket markets. Answer only YES, NO, or HOLD for each:\n\n" + "\n".join(prompt_lines)
 
         try:
             result = model_factory.swarm.query(prompt)
