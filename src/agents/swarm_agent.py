@@ -16,7 +16,7 @@ from termcolor import colored, cprint
 # Direct imports — no broken factory
 from openai import OpenAI
 from anthropic import Anthropic
-from xai import Grok
+# 🆕 Fix: xAI uses OpenAI-compatible API, no separate 'xai' or 'Grok' import needed
 from telegram import Bot
 
 # ============================================
@@ -37,7 +37,11 @@ MODELS = {
         "model": "o1-mini"
     },
     "grok": {
-        "client": Grok(api_key=os.getenv("XAI_API_KEY")),
+        # 🆕 Fix: Use OpenAI client with xAI base URL (xAI's recommended approach)
+        "client": OpenAI(
+            api_key=os.getenv("XAI_API_KEY"),
+            base_url="https://api.x.ai/v1"
+        ),
         "model": "grok-beta"
     },
     "together": {

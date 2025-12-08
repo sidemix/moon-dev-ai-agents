@@ -513,10 +513,12 @@ class PolymarketAgent:
                 cprint(f"❌ Failed to load swarm agent: {e}", "red")
                 cprint("💡 Falling back to single model mode", "yellow")
                 self.swarm = None
-                self.model = ModelFactory().get_model(AI_MODEL_PROVIDER, AI_MODEL_NAME)
+                # 🆕 Fix: get_model() only takes provider, not model name
+                self.model = ModelFactory().get_model(AI_MODEL_PROVIDER)
         else:
             cprint(f"🤖 Using single model: {AI_MODEL_PROVIDER}/{AI_MODEL_NAME}", "green")
-            self.model = ModelFactory().get_model(AI_MODEL_PROVIDER, AI_MODEL_NAME)
+            # 🆕 Fix: get_model() only takes provider, not model name
+            self.model = ModelFactory().get_model(AI_MODEL_PROVIDER)
             self.swarm = None
 
         # Initialize markets DataFrame
@@ -1426,7 +1428,8 @@ Provide predictions for each market in the specified format."""
             )
 
             # Use Claude 4.5 Sonnet for consensus (fast and reliable)
-            consensus_model = ModelFactory().get_model('claude', 'claude-sonnet-4-5')
+            # 🆕 Fix: get_model() only takes provider, not model name
+            consensus_model = ModelFactory().get_model('claude')
 
             cprint("⏳ Analyzing all responses for strongest consensus...\n", "cyan")
 
