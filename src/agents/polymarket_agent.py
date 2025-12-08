@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Moon Dev's Polymarket Agent — FINAL 6-MODEL + TELEGRAM VERSION
-100% crash-proof — no more pandas/pyarrow errors, no more UnboundLocalError
+100% crash-proof — no pandas errors, no UnboundLocalError
 """
 
 import os
@@ -41,7 +41,7 @@ DATA_FOLDER.mkdir(parents=True, exist_ok=True)
 MARKETS_CSV = DATA_FOLDER / "markets.csv"
 
 # ==============================================================================
-# Polymarket Agent — BULLETPROOF
+# Polymarket Agent — BULLETPROOF FINAL VERSION
 # ==============================================================================
 
 class PolymarketAgent:
@@ -127,7 +127,7 @@ class PolymarketAgent:
     def status_loop(self):
         while True:
             time.sleep(30)
-            df = self.markets_df
+            df = self.markets_df.copy()
             fresh = len(df[df["last_trade"].isna() | (pd.to_datetime(df["last_trade"], errors="coerce") > (datetime.now() - timedelta(hours=8)))])
             cprint(f"\nStatus @ {datetime.now().strftime('%H:%M:%S')} | Markets: {len(df)} | Fresh: {fresh}", "cyan")
 
@@ -138,16 +138,19 @@ class PolymarketAgent:
             time.sleep(ANALYSIS_INTERVAL)
 
     def run_analysis(self):
-        df = self.markets_df
+        df = self.markets_df.copy()
 
-        # Safe fresh count
+        # Safe fresh count and mask
+        fresh_mask = pd.Series([True] * len(df), index=df.index)
+        fresh_count = len(df)
+
         try:
             last_trade_times = pd.to_datetime(df["last_trade"], errors="coerce")
             cutoff = datetime.now() - timedelta(hours=8) if self.last_analysis_run else None
             fresh_mask = df["last_trade"].isna() | (last_trade_times > cutoff)
             fresh_count = fresh_mask.sum()
         except:
-            fresh_count = len(df)
+            pass  # Keep fresh_mask = all markets
 
         if fresh_count < NEW_MARKETS_FOR_ANALYSIS and self.last_analysis_run:
             return
