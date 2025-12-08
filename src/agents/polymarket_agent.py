@@ -4,6 +4,12 @@ Built with love by Moon Dev 🚀
 
 This agent scans Polymarket trades, saves markets to CSV, and uses AI to make predictions.
 NO ACTUAL TRADING - just predictions and analysis for now.
+
+🆕 v1.1 ADDITIONS (Checklist v1.0):
+- VIP Signals (5/6+ consensus) → Telegram alerts
+- Secondary Signals (4/6 consensus) → Telegram alerts  
+- Direct Polymarket links in messages
+- Modular router layer for signal classification
 """
 
 import os
@@ -14,6 +20,7 @@ import requests
 import pandas as pd
 import threading
 import websocket
+import re  # 🆕 Added for regex parsing
 from datetime import datetime, timedelta
 from pathlib import Path
 from termcolor import cprint
@@ -65,6 +72,28 @@ USE_SWARM_MODE = True  # Use swarm AI (multiple models) instead of single XAI mo
 AI_MODEL_PROVIDER = "xai"  # Model to use if USE_SWARM_MODE = False
 AI_MODEL_NAME = "grok-2-fast-reasoning"  # Model name if not using swarm
 SEND_PRICE_INFO_TO_AI = False  # Send market price/odds to AI models (True = include price, False = no price)
+
+# ==============================================================================
+# 🆕 TELEGRAM SIGNAL CONFIGURATION (Checklist v1.0)
+# ==============================================================================
+
+# Telegram Bot Configuration
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_VIP_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")  # Main VIP channel
+TELEGRAM_SECONDARY_CHAT_ID = os.getenv("TELEGRAM_SECONDARY_CHAT_ID", os.getenv("TELEGRAM_CHAT_ID"))  # Secondary channel (defaults to VIP if not set)
+
+# Signal Classification Thresholds
+VIP_MIN_AGREEMENT = 5  # 5/6+ = VIP Signal
+SECONDARY_MIN_AGREEMENT = 4  # 4/6 = Secondary Signal
+TOTAL_MODELS_EXPECTED = 6  # Expected number of models in swarm
+
+# Telegram Message Settings
+TELEGRAM_ENABLE_SIGNALS = True  # Master switch for Telegram signals
+TELEGRAM_USE_MARKDOWN_LINKS = True  # True = [Open Market](url), False = raw URL
+
+# ==============================================================================
+# END TELEGRAM CONFIG
+# ==============================================================================
 
 # 🌙 Moon Dev - AI Prompts (customize these for your own edge!)
 # ==============================================================================
@@ -131,6 +160,317 @@ CONSENSUS_PICKS_CSV = os.path.join(DATA_FOLDER, "consensus_picks.csv")  # 🌙 M
 POLYMARKET_API_BASE = "https://data-api.polymarket.com"
 WEBSOCKET_URL = "wss://ws-live-data.polymarket.com"
 
+
+# ==============================================================================
+# 🆕 TELEGRAM HELPER FUNCTIONS (Checklist v1.0 - Section 2)
+# ==============================================================================
+
+def send_telegram_message(chat_id: str, message: str, parse_mode: str = "Markdown") -> bool:
+    """
+    🆕 Checklist v1.0 - Section 2.1: Telegram helper function
+    
+    Sends a message to Telegram using the Bot API.
+    
+    Args:
+        chat_id: Telegram chat ID to send to
+        message: Message text (supports Markdown)
+        parse_mode: "Markdown" or "HTML"
+    
+    Returns:
+        bool: True if sent successfully, False otherwise
+    """
+    if not TELEGRAM_BOT_TOKEN or not chat_id:
+        return False
+    
+    if not TELEGRAM_ENABLE_SIGNALS:
+        return False
+    
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": False  # Allow link previews
+        }
+        
+        response = requests.post(url, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            return True
+        else:
+            cprint(f"⚠️ Telegram API error: {response.status_code} - {response.text}", "yellow")
+            return False
+            
+    except Exception as e:
+        cprint(f"❌ Telegram send error: {e}", "red")
+        return False
+
+
+def classify_signal(consensus_count: int, total_models: int) -> str:
+    """
+    🆕 Checklist v1.0 - Section 3: Consensus-Based Classification
+    
+    Classifies a signal based on consensus strength.
+    
+    Args:
+        consensus_count: Number of models that agreed
+        total_models: Total number of models that responded
+    
+    Returns:
+        str: "VIP", "SECONDARY", or "IGNORE"
+    """
+    # 🆕 Require at least TOTAL_MODELS_EXPECTED models for valid signals
+    if total_models < TOTAL_MODELS_EXPECTED:
+        return "IGNORE"
+    
+    # VIP: 5/6+ agreement
+    if consensus_count >= VIP_MIN_AGREEMENT:
+        return "VIP"
+    
+    # Secondary: exactly 4/6 agreement
+    if consensus_count >= SECONDARY_MIN_AGREEMENT:
+        return "SECONDARY"
+    
+    # Everything else is noise
+    return "IGNORE"
+
+
+def format_vip_message(title: str, side: str, consensus_line: str, link: str, reasoning: str) -> str:
+    """
+    🆕 Checklist v1.0 - Section 4.1: VIP Signal Format
+    
+    Formats a VIP signal message for Telegram.
+    """
+    if TELEGRAM_USE_MARKDOWN_LINKS:
+        link_text = f"👉 [Open Market]({link})"
+    else:
+        link_text = f"👉 {link}"
+    
+    message = f"""🔥 *VIP Polymarket Signal*
+
+*Market:* {title}
+*Side:* `{side}`
+*Consensus:* {consensus_line}
+
+{link_text}
+
+*Reason:* {reasoning}"""
+    
+    return message
+
+
+def format_secondary_message(title: str, side: str, consensus_line: str, link: str, reasoning: str) -> str:
+    """
+    🆕 Checklist v1.0 - Section 4.2: Secondary Signal Format
+    
+    Formats a Secondary signal message for Telegram.
+    """
+    if TELEGRAM_USE_MARKDOWN_LINKS:
+        link_text = f"👉 [Open Market]({link})"
+    else:
+        link_text = f"👉 {link}"
+    
+    message = f"""⚪️ *Secondary Signal*
+
+*Market:* {title}
+*Side:* `{side}`
+*Consensus:* {consensus_line}
+
+{link_text}
+
+*Reason:* {reasoning}"""
+    
+    return message
+
+
+def parse_consensus_picks(consensus_text: str) -> list:
+    """
+    🆕 Checklist v1.0 - Section 5: Safe Parsing of AI Consensus Output
+    
+    Parses the consensus AI response to extract individual picks.
+    
+    Args:
+        consensus_text: The raw consensus AI response text
+    
+    Returns:
+        list: List of dictionaries with pick data, or empty list on failure
+    """
+    picks = []
+    
+    try:
+        lines = consensus_text.split('\n')
+        current_pick = {}
+        
+        for line in lines:
+            line = line.strip()
+            
+            # Look for market number and title (e.g., "1. Market 5: Bitcoin to hit $100k?")
+            market_match = re.match(r'(\d+)\.\s+Market\s+(\d+):\s+(.+)', line)
+            if market_match:
+                # Save previous pick if exists and has required fields
+                if current_pick and 'title' in current_pick and 'link' in current_pick:
+                    picks.append(current_pick)
+                
+                current_pick = {
+                    'rank': market_match.group(1),
+                    'market_number': int(market_match.group(2)),
+                    'title': market_match.group(3).strip()
+                }
+                continue
+            
+            # Extract Side
+            if line.startswith('Side:'):
+                side = line.replace('Side:', '').strip()
+                current_pick['side'] = side
+                continue
+            
+            # Extract Consensus
+            if line.startswith('Consensus:'):
+                consensus_text_line = line.replace('Consensus:', '').strip()
+                current_pick['consensus_line'] = consensus_text_line
+                
+                # Try to extract the count (e.g., "5 out of 6" -> 5, 6)
+                consensus_match = re.search(r'(\d+)\s+out\s+of\s+(\d+)', consensus_text_line)
+                if consensus_match:
+                    current_pick['consensus_count'] = int(consensus_match.group(1))
+                    current_pick['total_models'] = int(consensus_match.group(2))
+                continue
+            
+            # Extract Link
+            if line.startswith('Link:'):
+                link = line.replace('Link:', '').strip()
+                current_pick['link'] = link
+                continue
+            
+            # Extract Reasoning
+            if line.startswith('Reasoning:'):
+                reasoning = line.replace('Reasoning:', '').strip()
+                current_pick['reasoning'] = reasoning
+                continue
+        
+        # Add last pick if valid
+        if current_pick and 'title' in current_pick and 'link' in current_pick:
+            picks.append(current_pick)
+        
+        return picks
+        
+    except Exception as e:
+        cprint(f"⚠️ Error parsing consensus picks: {e}", "yellow")
+        return []
+
+
+def process_consensus_and_send_signals(consensus_text: str):
+    """
+    🆕 Checklist v1.0 - Section 7: Router Layer
+    
+    Main router function that:
+    1. Parses the consensus AI text
+    2. Splits into individual picks
+    3. Classifies each pick (VIP/Secondary/Ignore)
+    4. Builds and sends Telegram messages
+    
+    Args:
+        consensus_text: The raw consensus AI response
+    """
+    if not TELEGRAM_ENABLE_SIGNALS:
+        cprint("📵 Telegram signals disabled - skipping router", "yellow")
+        return
+    
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_VIP_CHAT_ID:
+        cprint("⚠️ Telegram not configured - skipping signal routing", "yellow")
+        return
+    
+    cprint("\n" + "="*60, "magenta")
+    cprint("📡 SIGNAL ROUTER: Processing consensus picks...", "magenta", attrs=['bold'])
+    cprint("="*60, "magenta")
+    
+    # Parse the consensus picks
+    picks = parse_consensus_picks(consensus_text)
+    
+    if not picks:
+        cprint("⚠️ No valid picks parsed from consensus - skipping signals", "yellow")
+        return
+    
+    cprint(f"📊 Parsed {len(picks)} picks from consensus", "cyan")
+    
+    vip_count = 0
+    secondary_count = 0
+    ignored_count = 0
+    
+    for pick in picks:
+        try:
+            # Get required fields with defaults
+            title = pick.get('title', 'Unknown Market')
+            side = pick.get('side', 'NO_TRADE')
+            consensus_line = pick.get('consensus_line', 'Unknown consensus')
+            link = pick.get('link', '')
+            reasoning = pick.get('reasoning', 'No reasoning provided')
+            consensus_count = pick.get('consensus_count', 0)
+            total_models = pick.get('total_models', 0)
+            
+            # 🆕 Checklist Section 8: Skip if link is missing (we need clickable URL)
+            if not link or not link.startswith('http'):
+                cprint(f"⚠️ Skipping pick (no valid link): {title[:40]}...", "yellow")
+                ignored_count += 1
+                continue
+            
+            # Classify the signal
+            signal_type = classify_signal(consensus_count, total_models)
+            
+            if signal_type == "VIP":
+                # 🆕 Section 9: Light logging
+                print(f"[VIP] {title[:50]} ({side}) {consensus_line}")
+                
+                # Format and send VIP message
+                message = format_vip_message(title, side, consensus_line, link, reasoning)
+                success = send_telegram_message(TELEGRAM_VIP_CHAT_ID, message)
+                
+                if success:
+                    cprint(f"✅ VIP signal sent: {title[:40]}...", "green", attrs=['bold'])
+                    vip_count += 1
+                else:
+                    cprint(f"❌ Failed to send VIP signal: {title[:40]}...", "red")
+                    
+            elif signal_type == "SECONDARY":
+                # 🆕 Section 9: Light logging
+                print(f"[SECONDARY] {title[:50]} ({side}) {consensus_line}")
+                
+                # Format and send Secondary message
+                message = format_secondary_message(title, side, consensus_line, link, reasoning)
+                success = send_telegram_message(TELEGRAM_SECONDARY_CHAT_ID, message)
+                
+                if success:
+                    cprint(f"✅ Secondary signal sent: {title[:40]}...", "cyan")
+                    secondary_count += 1
+                else:
+                    cprint(f"❌ Failed to send Secondary signal: {title[:40]}...", "red")
+                    
+            else:
+                # Ignored (3/6 or below)
+                ignored_count += 1
+                cprint(f"⏭️ Ignored (weak consensus): {title[:40]}... ({consensus_count}/{total_models})", "white")
+                
+        except Exception as e:
+            # 🆕 Checklist Section 8: If parsing fails → skip only that pick
+            cprint(f"⚠️ Error processing pick: {e}", "yellow")
+            ignored_count += 1
+            continue
+    
+    # Summary
+    cprint("\n" + "-"*40, "magenta")
+    cprint("📊 SIGNAL ROUTING SUMMARY:", "magenta", attrs=['bold'])
+    cprint(f"   🔥 VIP signals sent: {vip_count}", "green" if vip_count > 0 else "white")
+    cprint(f"   ⚪ Secondary signals sent: {secondary_count}", "cyan" if secondary_count > 0 else "white")
+    cprint(f"   ⏭️ Ignored (weak/invalid): {ignored_count}", "white")
+    cprint("-"*40 + "\n", "magenta")
+
+
+# ==============================================================================
+# END TELEGRAM HELPER FUNCTIONS
+# ==============================================================================
+
+
 # ==============================================================================
 # Polymarket Agent
 # ==============================================================================
@@ -193,7 +533,38 @@ class PolymarketAgent:
             unique_runs = self.predictions_df['analysis_run_id'].nunique()
             cprint(f"   └─ {unique_runs} historical analysis runs", "cyan")
 
+        # 🆕 Show Telegram configuration status
+        self._log_telegram_status()
+
         cprint("✨ Initialization complete!\n", "green")
+
+    def _log_telegram_status(self):
+        """🆕 Checklist v1.0: Log Telegram configuration status"""
+        cprint("\n📱 Telegram Signal Configuration:", "magenta", attrs=['bold'])
+        
+        if TELEGRAM_ENABLE_SIGNALS:
+            cprint("   ✅ Signals ENABLED", "green")
+        else:
+            cprint("   ❌ Signals DISABLED", "red")
+            return
+        
+        if TELEGRAM_BOT_TOKEN:
+            cprint("   ✅ Bot token configured", "green")
+        else:
+            cprint("   ❌ Bot token MISSING", "red")
+        
+        if TELEGRAM_VIP_CHAT_ID:
+            cprint(f"   ✅ VIP chat ID: {TELEGRAM_VIP_CHAT_ID[:10]}...", "green")
+        else:
+            cprint("   ❌ VIP chat ID MISSING", "red")
+        
+        if TELEGRAM_SECONDARY_CHAT_ID and TELEGRAM_SECONDARY_CHAT_ID != TELEGRAM_VIP_CHAT_ID:
+            cprint(f"   ✅ Secondary chat ID: {TELEGRAM_SECONDARY_CHAT_ID[:10]}...", "green")
+        else:
+            cprint("   ℹ️ Secondary signals → VIP channel", "cyan")
+        
+        cprint(f"   🎯 VIP threshold: {VIP_MIN_AGREEMENT}/{TOTAL_MODELS_EXPECTED}+ consensus", "white")
+        cprint(f"   🎯 Secondary threshold: {SECONDARY_MIN_AGREEMENT}/{TOTAL_MODELS_EXPECTED} consensus", "white")
 
     def _load_markets(self):
         """Load existing markets from CSV or create empty DataFrame"""
@@ -674,7 +1045,12 @@ Provide predictions for each market in the specified format."""
             cprint("="*80 + "\n", "green")
 
             # 🌙 Moon Dev - Run final consensus AI to pick top 3 markets
-            self._get_top_consensus_picks(swarm_result, markets_to_analyze)
+            # 🆕 This now returns the consensus text for signal routing
+            consensus_picks_text = self._get_top_consensus_picks(swarm_result, markets_to_analyze)
+
+            # 🆕 Checklist v1.0: Route signals to Telegram
+            if consensus_picks_text:
+                process_consensus_and_send_signals(consensus_picks_text)
 
             # Save predictions to database
             try:
@@ -1018,6 +1394,9 @@ Provide predictions for each market in the specified format."""
         Args:
             swarm_result: Result dict from swarm.query() containing all AI responses
             markets_df: DataFrame of markets being analyzed
+        
+        Returns:
+            str: The consensus AI response text (for signal routing) or None on failure
         """
         try:
             cprint("\n" + "="*80, "yellow")
@@ -1073,10 +1452,14 @@ Provide predictions for each market in the specified format."""
             # 🌙 Moon Dev - Save consensus picks to dedicated CSV
             self._save_consensus_picks_to_csv(response.content, markets_df)
 
+            # 🆕 Return the consensus text for signal routing
+            return response.content
+
         except Exception as e:
             cprint(f"❌ Error getting top consensus picks: {e}", "red")
             import traceback
             traceback.print_exc()
+            return None  # 🆕 Return None on failure
 
     def _save_consensus_picks_to_csv(self, consensus_response, markets_df):
         """
@@ -1090,7 +1473,6 @@ Provide predictions for each market in the specified format."""
             markets_df: DataFrame of markets being analyzed
         """
         try:
-            import re
             from datetime import datetime
 
             cprint("\n💾 Saving top consensus picks to CSV...", "cyan")
@@ -1267,6 +1649,12 @@ Provide predictions for each market in the specified format."""
                 else:
                     cprint(f"   ⏳ Collecting... (Have {fresh_eligible_count}, need {NEW_MARKETS_FOR_ANALYSIS})", "yellow")
 
+                # 🆕 Show Telegram status
+                if TELEGRAM_ENABLE_SIGNALS and TELEGRAM_BOT_TOKEN:
+                    cprint(f"   📱 Telegram: ✅ READY", "green")
+                else:
+                    cprint(f"   📱 Telegram: ❌ DISABLED", "yellow")
+
                 cprint(f"{'='*60}\n", "cyan")
 
             except KeyboardInterrupt:
@@ -1433,6 +1821,25 @@ def main():
     cprint(f"🤖 AI Mode: {'SWARM (7 models)' if USE_SWARM_MODE else 'Single Model'}", "yellow")
     cprint(f"💰 Price Info to AI: {'ENABLED' if SEND_PRICE_INFO_TO_AI else 'DISABLED'}", "green" if SEND_PRICE_INFO_TO_AI else "yellow")
     cprint("", "yellow")
+    
+    # 🆕 Show Telegram signal configuration
+    cprint("📱 TELEGRAM SIGNALS:", "magenta", attrs=['bold'])
+    if TELEGRAM_ENABLE_SIGNALS:
+        cprint(f"   ✅ Signals ENABLED", "green")
+        cprint(f"   🔥 VIP threshold: {VIP_MIN_AGREEMENT}/{TOTAL_MODELS_EXPECTED}+ consensus", "white")
+        cprint(f"   ⚪ Secondary threshold: {SECONDARY_MIN_AGREEMENT}/{TOTAL_MODELS_EXPECTED} consensus", "white")
+        if TELEGRAM_BOT_TOKEN:
+            cprint(f"   ✅ Bot token configured", "green")
+        else:
+            cprint(f"   ❌ Bot token MISSING - set TELEGRAM_BOT_TOKEN", "red")
+        if TELEGRAM_VIP_CHAT_ID:
+            cprint(f"   ✅ VIP chat ID configured", "green")
+        else:
+            cprint(f"   ❌ VIP chat ID MISSING - set TELEGRAM_CHAT_ID", "red")
+    else:
+        cprint(f"   ❌ Signals DISABLED", "yellow")
+    cprint("", "yellow")
+    
     cprint("📁 Data Files:", "cyan", attrs=['bold'])
     cprint(f"   Markets: {MARKETS_CSV}", "white")
     cprint(f"   Predictions: {PREDICTIONS_CSV}", "white")
